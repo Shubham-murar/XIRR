@@ -7,6 +7,8 @@ __pycache__/
 .venv/
 env/
 venv/
+temp_env/
+git_filter_repo.py
 
 # Jupyter Notebook Checkpoints
 .ipynb_checkpoints
