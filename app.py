@@ -51,23 +51,21 @@ def calculate_xirr(cashflows):
         return None
     
     # Try multiple starting points for Newton's method
-    starting_rates = [0.1, 0.01, 0.5, -0.5, 0.2, -0.2, 1.0, -0.9] # Original starting rates
+    starting_rates = [0.1, 0.01, 0.5, -0.5, 0.2, -0.2, 1.0, -0.9]
     
     for start_rate in starting_rates:
         try:
-            result = newton(lambda r: xnpv(r, cashflows), start_rate, maxiter=1000, tol=1e-6) # Original tol
+            result = newton(lambda r: xnpv(r, cashflows), start_rate, maxiter=1000, tol=1e-6)
             # Validate result is reasonable (between -99% and 10000%)
             if -0.99 <= result <= 100:
                 return result
-        except: # Original broad exception handling
+        except:
             continue
     
     return None
 
 def calculate_stock_only_xirr(ticker, df_trans, prices_dict, calculation_date):
     """Calculate XIRR for stock transactions only (excluding options)"""
-    st.subheader(f"📈 Stock-Only XIRR for {ticker}")
-    st.markdown("---") # Added for visual separation
     
     # Filter for stock transactions only (not options)
     stock_trans = df_trans[
@@ -76,8 +74,7 @@ def calculate_stock_only_xirr(ticker, df_trans, prices_dict, calculation_date):
     ].copy()
     
     if stock_trans.empty:
-        st.info("No stock transactions found.")
-        return None
+        return None, [] # Return None for XIRR and empty list for cashflows
     
     # Sort by date
     stock_trans = stock_trans.sort_values('Date')
@@ -85,7 +82,6 @@ def calculate_stock_only_xirr(ticker, df_trans, prices_dict, calculation_date):
     cashflows = []
     total_qty = 0
     
-    st.markdown("**Stock Transactions:**")
     for _, row in stock_trans.iterrows():
         date = row['Date']
         qty = row['Qty']
@@ -93,42 +89,22 @@ def calculate_stock_only_xirr(ticker, df_trans, prices_dict, calculation_date):
         
         cashflows.append((date, cash_flow))
         total_qty += qty
-        
-        action = "BUY" if cash_flow < 0 else "SELL"
-        st.write(f"  {date.date()}: {action} {qty:>8.3f} shares for ${cash_flow:>10.2f}")
-    
-    st.write(f"\nNet Stock Position: {total_qty:.3f} shares")
     
     # Add terminal value for current holdings
     current_price = prices_dict.get(ticker)
     if current_price and total_qty != 0:
         terminal_value = total_qty * current_price
-        cashflows.append((calculation_date, terminal_value)) # Use calculation_date for consistency
-        st.write(f"Current Holdings Value: {total_qty:.3f} × ${current_price} = ${terminal_value:,.2f}")
+        cashflows.append((calculation_date, terminal_value))
     
     # Calculate XIRR
     if len(cashflows) >= 2:
-        st.markdown("**Stock Cash Flow Summary:**")
-        # Display cash flows in a DataFrame for better readability
-        df_cashflows = pd.DataFrame(sorted(cashflows, key=lambda x: x[0]), columns=['Date', 'Cash Flow'])
-        st.dataframe(df_cashflows.style.format({'Cash Flow': '${:,.2f}'}))
-        
-        with st.spinner("Calculating Stock-Only XIRR..."):
-            xirr = calculate_xirr(sorted(cashflows, key=lambda x: x[0]))
-        if xirr is not None:
-            st.success(f"✅ Stock-Only XIRR: {xirr:.3%}")
-            return xirr
-        else:
-            st.warning("⚠️ Could not calculate XIRR for stock-only transactions.")
-    else:
-        st.warning("⚠️ Not enough cash flows for stock-only XIRR calculation.")
+        xirr = calculate_xirr(sorted(cashflows, key=lambda x: x[0]))
+        return xirr, sorted(cashflows, key=lambda x: x[0])
     
-    return None
+    return None, []
 
 def calculate_combined_xirr(ticker, df_trans, prices_dict, calculation_date):
     """Calculate XIRR including both stock and option transactions"""
-    st.subheader(f"📊 Combined XIRR for {ticker} (Stock + Options)")
-    st.markdown("---") # Added for visual separation
     
     # Get all transactions for this ticker (stock and options)
     ticker_trans = df_trans[
@@ -136,14 +112,11 @@ def calculate_combined_xirr(ticker, df_trans, prices_dict, calculation_date):
     ].copy().sort_values('Date')
     
     if ticker_trans.empty:
-        st.info("No transactions found.")
-        return None
+        return None, [] # Return None for XIRR and empty list for cashflows
     
     cashflows = []
     stock_qty = 0
     option_positions = {}
-    
-    st.markdown("**All Transactions (Stock & Options):**")
     
     for _, row in ticker_trans.iterrows():
         symbol = row['Symbol']
@@ -154,78 +127,46 @@ def calculate_combined_xirr(ticker, df_trans, prices_dict, calculation_date):
         cashflows.append((date, cash_flow))
         
         if is_option_symbol(symbol):
-            # Option transaction
             if symbol not in option_positions:
                 option_positions[symbol] = {'net_qty': 0, 'transactions': []}
             
             option_positions[symbol]['net_qty'] += qty
             option_positions[symbol]['transactions'].append(row)
-            
-            action = "SELL" if qty < 0 else "BUY"
-            st.write(f"  {date.date()}: OPTION {action} {abs(qty):>6.0f} contracts {symbol} for ${cash_flow:>10.2f}")
         else:
-            # Stock transaction
             stock_qty += qty
-            action = "BUY" if cash_flow < 0 else "SELL"
-            st.write(f"  {date.date()}: STOCK  {action} {qty:>8.3f} shares {symbol} for ${cash_flow:>10.2f}")
-    
-    st.write(f"\nNet Stock Position: {stock_qty:.3f} shares")
     
     # Handle current option values
     if option_positions:
-        st.markdown("**Option Positions:**")
         for symbol, position in option_positions.items():
             net_qty = position['net_qty']
-            st.write(f"  {symbol}: {net_qty:>6.0f} contracts")
             
             if net_qty != 0:
                 try:
-                    # Parse expiry date - REVERTED TO ORIGINAL SLICING
                     ticker_len = len(ticker)
                     date_part = symbol[ticker_len:ticker_len+6]  # YYMMDD
                     expiry = datetime.strptime(date_part, "%y%m%d")
                     
-                    st.write(f"    Expires: {expiry.date()}")
-                    
-                    if expiry >= datetime.today(): # ORIGINAL LOGIC: compare with datetime.today()
+                    if expiry >= datetime.today():
                         current_option_price = prices_dict.get(symbol)
                         if current_option_price:
                             option_value = current_option_price * net_qty * 100
-                            cashflows.append((calculation_date, option_value)) # Use calculation_date
-                            st.write(f"    Current value: ${current_option_price} × {net_qty} × 100 = ${option_value:,.2f}")
-                        else:
-                            st.warning(f"    No current price available for option {symbol}.")
-                    else:
-                        st.info(f"    Option {symbol} expired (assumed worthless).") # Changed print to st.info
-                        
-                except Exception as e: # Original broad exception handling
-                    st.error(f"    Error parsing expiry for {symbol}: {e}") # Changed print to st.error
+                            cashflows.append((calculation_date, option_value))
+                except Exception:
+                    # Silently skip if expiry parsing fails, as per reduced verbosity
+                    pass
     
     # Add terminal value for stock holdings
     current_stock_price = prices_dict.get(ticker)
     if current_stock_price and stock_qty != 0:
         terminal_value = stock_qty * current_stock_price
-        cashflows.append((calculation_date, terminal_value)) # Use calculation_date
-        st.write(f"\nCurrent Stock Value: {stock_qty:.3f} × ${current_stock_price} = ${terminal_value:,.2f}")
+        cashflows.append((calculation_date, terminal_value))
     
     # Calculate XIRR
     if len(cashflows) >= 2:
-        st.markdown("**Combined Cash Flow Summary:**")
-        # Display cash flows in a DataFrame for better readability
-        df_cashflows_combined = pd.DataFrame(sorted(cashflows, key=lambda x: x[0]), columns=['Date', 'Cash Flow'])
-        st.dataframe(df_cashflows_combined.style.format({'Cash Flow': '${:,.2f}'}))
-
-        with st.spinner("Calculating Combined XIRR..."):
-            xirr = calculate_xirr(sorted(cashflows, key=lambda x: x[0]))
-        if xirr is not None:
-            st.success(f"✅ Combined XIRR: {xirr:.3%}")
-            return xirr
-        else:
-            st.warning("⚠️ Could not calculate XIRR for combined transactions.")
-    else:
-        st.warning("⚠️ Not enough cash flows for combined XIRR calculation.")
+        xirr = calculate_xirr(sorted(cashflows, key=lambda x: x[0]))
+        return xirr, sorted(cashflows, key=lambda x: x[0])
     
-    return None
+    return None, []
 
 # --- Streamlit App Layout ---
 
@@ -237,6 +178,7 @@ st.title("🚀 Portfolio XIRR Calculator")
 with st.expander("ℹ️ How to Use"):
     st.markdown("""
     Paste your transaction data and current price data into the respective text areas below.
+    The application will automatically detect all unique stock tickers and calculate XIRR for each.
     
     **Transaction Data Format (CSV-like, with header row):**
     
@@ -263,18 +205,16 @@ with st.expander("ℹ️ How to Use"):
     - `Symbol`: Stock ticker or option symbol
     - `Current Price`: The current price of the stock/option
     
-    After pasting, enter the main stock ticker you want to analyze (e.g., `BKE` or `BOOT`) and click "Calculate XIRR".
+    Click "Calculate XIRR" to see the results for all detected tickers.
     """)
 
 st.markdown("---")
 
 # Initialize session state for inputs if not already present
 if 'transactions_input' not in st.session_state:
-    st.session_state.transactions_input = "Symbol,Date,Qty,Cash Flow\nBKE,3/18/2025,25,-939.75\nBKE,3/24/2025,25,-985.5\nBKE,3/28/2025,25,-942.8\nBKE,4/2/2025,25,-950.75\nBKE,4/4/2025,30,-1031.7\nBKE,4/29/2025,1.315,-45.5\nBKE,4/30/2025,-30,1032.57\nBKE250417C00040000,4/2/2025,-1,51\nBKE250417C00040000,4/17/2025,1,0\nBKE250620C00040000,4/23/2025,-1,89\nBKE250620C00040000,6/20/2025,1,-521\nBKE251219C00040000,6/23/2025,-1,649\nBOOT,2/6/2025,3,-435.96\nBOOT,2/13/2025,4,-581.28\nBOOT,2/19/2025,3,-436.5\nBOOT,2/26/2025,3,-437.55\nBOOT,3/4/2025,3,-438.27\nBOOT,3/11/2025,3,-439.86\nBOOT,3/18/2025,3,-440.13\nBOOT,3/25/2025,3,-440.73\nBOOT,4/1/2025,3,-441.36\nBOOT,4/8/2025,3,-442.23\nBOOT,4/15/2025,3,-443.1\nBOOT,4/22/2025,3,-443.97\nBOOT,4/29/2025,3,-444.84\nBOOT,5/6/2025,3,-445.71\nBOOT,5/13/2025,3,-446.58\nBOOT,5/20/2025,3,-447.45\nBOOT,5/27/2025,3,-448.32\nBOOT,6/3/2025,3,-449.19\nBOOT,6/10/2025,3,-450.06\nBOOT,6/17/2025,3,-450.93\nBOOT,6/24/2025,3,-451.8\nBOOT,7/1/2025,3,-452.67\nBOOT,7/8/2025,3,-453.54\nBOOT,7/15/2025,3,-454.41\nBOOT,7/22/2025,3,-455.28\nBOOT,7/29/2025,3,-456.15\nBOOT,8/5/2025,3,-457.02\nBOOT,8/12/2025,3,-457.89\nBOOT,8/19/2025,3,-458.76\nBOOT,8/26/2025,3,-459.63\nBOOT,9/2/2025,3,-460.5\nBOOT,9/9/2025,3,-461.37\nBOOT,9/16/2025,3,-462.24\nBOOT,9/23/2025,3,-463.11\nBOOT,9/30/2025,3,-463.98\nBOOT,10/7/2025,3,-464.85\nBOOT,10/14/2025,3,-465.72\nBOOT,10/21/2025,3,-466.59\nBOOT,10/28/2025,3,-467.46\nBOOT,11/4/2025,3,-468.33\nBOOT,11/11/2025,3,-469.2\nBOOT,11/18/2025,3,-470.07\nBOOT,11/25/2025,3,-470.94\nBOOT,12/2/2025,3,-471.81\nBOOT,12/9/2025,3,-472.68\nBOOT,12/16/2025,3,-473.55\nBOOT,12/23/2025,3,-474.42\nBOOT,12/30/2025,3,-475.29\n"
+    st.session_state.transactions_input = "Symbol,Date,Qty,Cash Flow\nBKE,3/18/2025,25,-939.75\nBKE,3/24/2025,25,-985.5\nBKE,3/28/2025,25,-942.8\nBKE,4/2/2025,25,-950.75\nBKE,4/4/2025,30,-1031.7\nBKE,4/29/2025,1.315,-45.5\nBKE,4/30/2025,-30,1032.57\nBKE250417C00040000,4/2/2025,-1,51\nBKE250417C00040000,4/17/2025,1,0\nBKE250620C00040000,4/23/2025,-1,89\nBKE250620C00040000,6/20/2025,1,-521\nBKE251219C00040000,6/23/2022,-1,649\nBOOT,2/6/2025,3,-435.96\nBOOT,2/13/2025,4,-581.28\nBOOT,2/19/2025,3,-436.5\nBOOT,2/26/2025,3,-437.55\nBOOT,3/4/2025,3,-438.27\nBOOT,3/11/2025,3,-439.86\nBOOT,3/18/2025,3,-440.13\nBOOT,3/25/2025,3,-440.73\nBOOT,4/1/2025,3,-441.36\nBOOT,4/8/2025,3,-442.23\nBOOT,4/15/2025,3,-443.1\nBOOT,4/22/2025,3,-443.97\nBOOT,4/29/2025,3,-444.84\nBOOT,5/6/2025,3,-445.71\nBOOT,5/13/2025,3,-446.58\nBOOT,5/20/2025,3,-447.45\nBOOT,5/27/2025,3,-448.32\nBOOT,6/3/2025,3,-449.19\nBOOT,6/10/2025,3,-450.06\nBOOT,6/17/2025,3,-450.93\nBOOT,6/24/2025,3,-451.8\nBOOT,7/1/2025,3,-452.67\nBOOT,7/8/2025,3,-453.54\nBOOT,7/15/2025,3,-454.41\nBOOT,7/22/2025,3,-455.28\nBOOT,7/29/2025,3,-456.15\nBOOT,8/5/2025,3,-457.02\nBOOT,8/12/2025,3,-457.89\nBOOT,8/19/2025,3,-458.76\nBOOT,8/26/2025,3,-459.63\nBOOT,9/2/2025,3,-460.5\nBOOT,9/9/2025,3,-461.37\nBOOT,9/16/2025,3,-462.24\nBOOT,9/23/2025,3,-463.11\nBOOT,9/30/2025,3,-463.98\nBOOT,10/7/2025,3,-464.85\nBOOT,10/14/2025,3,-465.72\nBOOT,10/21/2025,3,-466.59\nBOOT,10/28/2025,3,-467.46\nBOOT,11/4/2025,3,-468.33\nBOOT,11/11/2025,3,-469.2\nBOOT,11/18/2025,3,-470.07\nBOOT,11/25/2025,3,-470.94\nBOOT,12/2/2025,3,-471.81\nBOOT,12/9/2025,3,-472.68\nBOOT,12/16/2025,3,-473.55\nBOOT,12/23/2025,3,-474.42\nBOOT,12/30/2025,3,-475.29\n"
 if 'prices_input' not in st.session_state:
     st.session_state.prices_input = "Symbol,Current Price\nBKE,49.7\nBOOT,170\nBKE251219C00040000,11.2\n"
-if 'ticker_symbol' not in st.session_state:
-    st.session_state.ticker_symbol = "BKE"
 
 col1, col2 = st.columns(2)
 
@@ -294,26 +234,21 @@ with col2:
         key="prices_textarea"
     )
 
-ticker_symbol = st.text_input(
-    "Enter the **Ticker Symbol** to analyze (e.g., BKE, BOOT)",
-    value=st.session_state.ticker_symbol,
-    key="ticker_input"
-).upper()
+# Removed ticker_symbol input as it will be auto-detected
 
 # Buttons for actions
 col_buttons = st.columns(2)
 with col_buttons[0]:
-    calculate_button = st.button("Calculate XIRR", type="primary")
+    calculate_button = st.button("Calculate XIRR for All Tickers", type="primary")
 with col_buttons[1]:
     if st.button("Reset All"):
         st.session_state.transactions_input = "Symbol,Date,Qty,Cash Flow\n"
         st.session_state.prices_input = "Symbol,Current Price\n"
-        st.session_state.ticker_symbol = ""
         st.experimental_rerun() # Rerun to clear inputs
 
 if calculate_button:
-    if not transactions_input.strip() or not prices_input.strip() or not ticker_symbol.strip():
-        st.error("Please paste both transaction and current price data, and enter a ticker symbol.")
+    if not transactions_input.strip() or not prices_input.strip():
+        st.error("Please paste both transaction and current price data.")
     else:
         with st.spinner("Loading and parsing data..."):
             try:
@@ -327,7 +262,6 @@ if calculate_button:
                 df_trans['Qty'] = pd.to_numeric(df_trans['Qty'], errors='coerce')
                 df_trans['Cash Flow'] = pd.to_numeric(df_trans['Cash Flow'], errors='coerce')
                 
-                # Drop rows with NaT dates or NaN quantities/cash flows after conversion
                 initial_trans_rows = len(df_trans)
                 df_trans.dropna(subset=['Date', 'Qty', 'Cash Flow'], inplace=True)
                 if len(df_trans) < initial_trans_rows:
@@ -340,7 +274,6 @@ if calculate_button:
                     raise ValueError("Current price data must contain 'Symbol', 'Current Price' columns.")
                 
                 prices_dict = dict(zip(df_prices['Symbol'], pd.to_numeric(df_prices['Current Price'], errors='coerce')))
-                # Filter out NaN prices
                 prices_dict = {k: v for k, v in prices_dict.items() if pd.notna(v)}
 
                 st.success(f"📊 Successfully parsed {len(df_trans)} transactions and {len(prices_dict)} current prices.")
@@ -357,37 +290,96 @@ if calculate_button:
                 st.info(f"Valuing current holdings as of: **{calculation_date.strftime('%Y-%m-%d')}**")
                 st.markdown("---")
 
-                # Check what transactions we have for this ticker
-                ticker_transactions = df_trans[df_trans['Symbol'].str.startswith(ticker_symbol)]
-                stock_transactions = ticker_transactions[~ticker_transactions['Symbol'].apply(is_option_symbol)]
-                option_transactions = ticker_transactions[ticker_transactions['Symbol'].apply(is_option_symbol)]
-                
-                st.info(f"Summary for {ticker_symbol}:")
-                st.info(f"  - {len(stock_transactions)} stock transactions")
-                st.info(f"  - {len(option_transactions)} option transactions")
-
-                st.markdown("---")
-
-                stock_xirr = calculate_stock_only_xirr(ticker_symbol, df_trans, prices_dict, calculation_date)
-                
-                st.markdown("---")
-
-                if not option_transactions.empty:
-                    combined_xirr = calculate_combined_xirr(ticker_symbol, df_trans, prices_dict, calculation_date)
-                    
-                    if stock_xirr is not None and combined_xirr is not None:
-                        st.markdown("---")
-                        st.header(f"📈 Final Results for {ticker_symbol}:")
-                        st.metric("Stock-Only XIRR", f"{stock_xirr:.3%}")
-                        st.metric("Combined XIRR", f"{combined_xirr:.3%}")
-                        st.metric("Options Impact", f"{(combined_xirr - stock_xirr):>+8.3%}")
-                else:
-                    st.markdown("---")
-                    st.header(f"📈 Final Result for {ticker_symbol}:")
-                    if stock_xirr is not None:
-                        st.metric("Stock-Only XIRR", f"{stock_xirr:.3%}")
+                # --- Automatic Ticker Detection ---
+                # Extract base tickers (remove option details)
+                base_tickers = set()
+                for symbol in df_trans['Symbol'].unique():
+                    if not is_option_symbol(symbol):
+                        base_tickers.add(symbol)
                     else:
-                        st.warning("No XIRR calculated.")
+                        # Attempt to extract base ticker from option symbol, e.g., BKE from BKE251219C00040000
+                        # This is a heuristic and might need adjustment based on actual symbol formats
+                        # For now, let's try to find the longest prefix that is a known stock symbol
+                        # or derive it if it's not directly in prices_dict but is a valid stock-like symbol
+                        potential_base = symbol
+                        # Try to strip date/strike from option symbol to get potential base ticker
+                        # Example: BKE251219C00040000 -> BKE
+                        # This is a simplified heuristic and might not cover all cases.
+                        # A more robust solution would involve a list of known stock tickers.
+                        
+                        # Find the first digit sequence after the initial alpha characters, assuming it's the date
+                        match = None
+                        for i, char in enumerate(symbol):
+                            if char.isdigit():
+                                match = i
+                                break
+                        if match is not None:
+                            potential_base = symbol[:match]
+
+                        # Check if this potential_base is a stock symbol (not an option itself)
+                        if potential_base and not is_option_symbol(potential_base):
+                            base_tickers.add(potential_base)
+                        else:
+                            # Fallback if the above heuristic fails or yields an option-like symbol
+                            # Try to find the longest prefix that exists in prices_dict as a non-option
+                            longest_prefix_match = ""
+                            for p_sym in prices_dict.keys():
+                                if symbol.startswith(p_sym) and not is_option_symbol(p_sym) and len(p_sym) > len(longest_prefix_match):
+                                    longest_prefix_match = p_sym
+                            if longest_prefix_match:
+                                base_tickers.add(longest_prefix_match)
+                            else:
+                                # If still no match, just add the symbol itself if it's not an option
+                                if not is_option_symbol(symbol):
+                                    base_tickers.add(symbol)
+
+
+                if not base_tickers:
+                    st.warning("No recognizable stock tickers found in the transaction data for analysis.")
+                    st.info("Please ensure your 'Symbol' column contains valid stock tickers or option symbols that start with a stock ticker.")
+                else: # Only proceed with analysis if base_tickers is not empty
+                    st.header("Results for All Detected Tickers:")
+                    for ticker_symbol in sorted(list(base_tickers)):
+                        st.markdown(f"## {ticker_symbol} Analysis")
+                        st.markdown("---")
+
+                        # Calculate stock-only XIRR
+                        stock_xirr, stock_cashflows = calculate_stock_only_xirr(ticker_symbol, df_trans, prices_dict, calculation_date)
+                        
+                        if stock_cashflows: # Only display if there are cashflows
+                            st.markdown("**Stock-Only Cash Flow Summary:**")
+                            df_stock_cashflows = pd.DataFrame(stock_cashflows, columns=['Date', 'Cash Flow'])
+                            st.dataframe(df_stock_cashflows.style.format({'Cash Flow': '${:,.2f}'}))
+                        
+                        if stock_xirr is not None:
+                            st.metric("Stock-Only XIRR", f"{stock_xirr:.3%}")
+                        else:
+                            st.info(f"Stock-Only XIRR could not be calculated for {ticker_symbol}.")
+
+                        # Check if options exist for this ticker before calculating combined XIRR
+                        ticker_option_transactions = df_trans[
+                            df_trans['Symbol'].str.startswith(ticker_symbol) & 
+                            df_trans['Symbol'].apply(is_option_symbol)
+                        ]
+
+                        if not ticker_option_transactions.empty:
+                            combined_xirr, combined_cashflows = calculate_combined_xirr(ticker_symbol, df_trans, prices_dict, calculation_date)
+                            
+                            if combined_cashflows: # Only display if there are cashflows
+                                st.markdown("**Combined Cash Flow Summary:**")
+                                df_combined_cashflows = pd.DataFrame(combined_cashflows, columns=['Date', 'Cash Flow'])
+                                st.dataframe(df_combined_cashflows.style.format({'Cash Flow': '${:,.2f}'}))
+
+                            if combined_xirr is not None:
+                                st.metric("Combined XIRR", f"{combined_xirr:.3%}")
+                                if stock_xirr is not None:
+                                    st.metric("Options Impact", f"{(combined_xirr - stock_xirr):>+8.3%}")
+                            else:
+                                st.info(f"Combined XIRR could not be calculated for {ticker_symbol} (likely insufficient data for options).")
+                        else:
+                            st.info(f"No option transactions found for {ticker_symbol}. Combined XIRR is not applicable.")
+                        
+                        st.markdown("---") # Separator between tickers
 
             except pd.errors.EmptyDataError:
                 st.error("Error: One of the pasted data areas is empty or contains no data rows (only headers).")
