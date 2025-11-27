@@ -305,7 +305,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 *Making lending smarter, faster, and fairer*
 
-[![Star History Chart](https://api.star-history.com/svg?repos=your-username/loan-risk-ai-pro&type=Date)](https://star-history.com/#your-username/loan-risk-ai-pro&Date)
 
 </div>
 
@@ -325,4 +324,3 @@ streamlit run app.py
 
 **Experience the future of credit risk assessment!** 🚀
 
-make it projecct MD friendly wwhch i can direvctly paste 
